@@ -24,7 +24,7 @@ const setCookie = (res, accessToken, refreshToken) => {
     res.cookie('accessToken', accessToken, {
         httpOnly: true, //prevent XSS
         secure: isProduction,
-        sameSite,
+        sameSite = ,
         maxAge: 15 * 60 * 1000 // 15 min
     })
     res.cookie('refreshToken', refreshToken, {

@@ -25,7 +25,9 @@ const allowedOrigins = Array.from(
 			process.env.CLIENT_URL,
 			"http://localhost:5173",
 			"https://thetransformedmeacademy.vercel.app",
+			"https://thetransformedmeacademy.com",
 			"https://www.thetransformedmeacademy.com",
+			SITE_URL,
 		]
 			.filter(Boolean)
 			.map((o) => o.trim())
