@@ -18,16 +18,19 @@ const storeRefreshToken = async (userId, refreshToken) => {
     }
 }
 const setCookie = (res, accessToken, refreshToken) => {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const sameSite = isProduction ? 'None' : 'Lax';
+
     res.cookie('accessToken', accessToken, {
         httpOnly: true, //prevent XSS
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'Strict', //CSRF protection
+        secure: isProduction,
+        sameSite,
         maxAge: 15 * 60 * 1000 // 15 min
     })
     res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',  
-        sameSite: 'Strict',
+        secure: isProduction,  
+        sameSite,
         maxAge: 7 * 24 * 60 * 60 * 1000 //7 days
     });
 }
@@ -128,11 +131,11 @@ export const refreshToken = async (req, res) => {
         if (storedToken !== refreshToken) {
             return res.status(403).json({ message: 'Refresh token does not match' });
         }
-        const accessToken = jwt.sign({ userId: decoded.userId }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '15m' });
+       const accessToken = jwt.sign({ userId: decoded.userId }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '15m' });
        res.cookie("accessToken", accessToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'Strict',
+        sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax',
         maxAge: 15 * 60 * 1000 // 15 minutes
        });
        res.status(200).json({ message: 'Access token refreshed' });
