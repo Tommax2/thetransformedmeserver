@@ -7,6 +7,28 @@ const orderSchema = new mongoose.Schema(
 			ref: "User",
 			required: true,
 		},
+		paymentProvider: {
+			type: String,
+			enum: ["manual", "stripe"],
+			default: "manual",
+		},
+		paymentStatus: {
+			type: String,
+			enum: ["unpaid", "pending", "paid", "failed", "refunded"],
+			default: "unpaid",
+		},
+		currency: {
+			type: String,
+		},
+		stripeSessionId: {
+			type: String,
+		},
+		stripePaymentIntentId: {
+			type: String,
+		},
+		paidAt: {
+			type: Date,
+		},
 		products: [
 			{
 				product: {
@@ -30,6 +52,12 @@ const orderSchema = new mongoose.Schema(
 			type: Number,
 			required: true,
 			min: 0,
+		},
+		paymentConfirmationEmailSentAt: {
+			type: Date,
+		},
+		paymentConfirmationEmailError: {
+			type: String,
 		},
 	},
 	{ timestamps: true }

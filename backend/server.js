@@ -9,6 +9,7 @@ import productRoutes from './routes/product.route.js';
 import cartRoutes from './routes/cart.route.js';
 import paymentRoutes from './routes/payment.route.js';
 import analyticsRoutes from './routes/analytics.route.js';
+import { stripeWebhook } from "./controllers/payment.controller.js";
 
 dotenv.config();
 
@@ -51,6 +52,14 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
+
+// Stripe webhooks require the raw request body for signature verification.
+app.post(
+	"/api/payment/stripe/webhook",
+	express.raw({ type: "application/json" }),
+	stripeWebhook
+);
+
 app.use(express.json(  {  limit:"10mb"  }));
 app.use(cookieParser());
 
