@@ -127,8 +127,8 @@ export const createStripeCheckoutSession = async (req, res) => {
 				""
 			);
 		const successUrl =
-			process.env.STRIPE_SUCCESS_URL ||
-			`${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`;
+    process.env.STRIPE_SUCCESS_URL ||
+    `${clientUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
 		const cancelUrl =
 			process.env.STRIPE_CANCEL_URL || `${clientUrl}/cart?canceled=true`;
 
@@ -312,7 +312,32 @@ export const stripeWebhook = async (req, res) => {
 		return res.status(500).json({ message: "Webhook handler error" });
 	}
 };
+export const getStripeSession = async (req, res) => {
+    try {
+        const stripe = getStripe();
+        const { session_id } = req.query;
 
+        if (!session_id) {
+            return res.status(400).json({ message: "session_id is required" });
+        }
+
+        const session = await stripe.checkout.sessions.retrieve(session_id, {
+            expand: ["line_items"],
+        });
+
+        res.status(200).json({
+            email: session.customer_email,
+            items: session.line_items?.data?.map((i) => ({
+                name: i.description,
+                quantity: i.quantity,
+            })),
+            metadata: session.metadata,
+        });
+    } catch (error) {
+        console.error("Error retrieving Stripe session:", error);
+        res.status(500).json({ message: "Failed to retrieve session" });
+    }
+};
 // Function to generate WhatsApp link
 function generateWhatsAppLink(user, products, orderProducts, totalAmount, orderId) {
     // Build product list
