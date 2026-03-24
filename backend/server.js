@@ -4,7 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
 import authRoutes from './routes/auth.route.js';
-import { connectDB } from './lib/db.js';
+import { initDBConnection } from './lib/db.js';
 import cookieParser from 'cookie-parser';
 import productRoutes from './routes/product.route.js';
 import cartRoutes from './routes/cart.route.js';
@@ -96,16 +96,14 @@ if (process.env.NODE_ENV === "production") {
     });
 }
 
-const startServer = async () => {
-    try {
-        await connectDB();
-        app.listen(PORT, () => {
-            console.log('Server is running Http://localhost:' + PORT);
-        });
-    } catch (error) {
-        console.error("Failed to start server:", error.message);
-        process.exit(1);
-    }
+const startServer = () => {
+    app.listen(PORT, () => {
+        console.log('Server is running Http://localhost:' + PORT);
+    });
+
+    initDBConnection().catch((error) => {
+        console.error("Database initialization error:", error.message);
+    });
 };
 
 startServer();
