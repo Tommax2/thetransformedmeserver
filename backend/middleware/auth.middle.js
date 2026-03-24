@@ -8,7 +8,9 @@ export const protectRoute = async (req, res, next) => {
             return res.status(401).json({ message: 'Unauthorized' });
         }
         const decoded = jwt.verify(accessToken, process.env.ACCESS_TOKEN_SECRET);
-        const user = await User.findById(decoded.userId).select('-password');
+        const user = await User.findById(decoded.userId)
+            .select('-password')
+            .lean();
         if (!user) {
             return res.status(401).json({ message: 'Unauthorized' });
         }
