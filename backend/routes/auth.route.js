@@ -1,4 +1,3 @@
-
 import express from 'express';
 import {
 	signup,
@@ -6,6 +5,8 @@ import {
 	logout,
 	refreshToken,
 	getProfile,
+	requestPasswordReset,
+	resetPassword,
 } from '../controllers/auth.controller.js';
 import { protectRoute } from '../middleware/auth.middle.js';
 import {
@@ -20,5 +21,7 @@ router.post('/login', authRateLimiter, login);
 router.post('/logout', protectRoute, logout);
 router.post('/refresh-token', refreshRateLimiter, refreshToken);
 router.get('/profile', protectRoute, getProfile);
+router.post('/request-password-reset', authRateLimiter, requestPasswordReset);
+router.post('/reset-password', resetPassword);
 
 export default router;
