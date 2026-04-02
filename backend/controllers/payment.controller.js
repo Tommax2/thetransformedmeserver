@@ -742,24 +742,96 @@ export const resendPaymentConfirmationEmail = async (req, res) => {
 export const verifyPaystackPayment = async (req, res) => {
 	try {
 		const paystack = getPaystack();
-		const { reference } = req.query;
+		const reference = req.query.reference || req.query.trxref;
 
 		if (!reference) {
-			return res.status(400).json({ message: "reference is required" });
+			return res.status(400).json({ message: "reference or trxref is required" });
 		}
 
 		const transaction = await paystack.transaction.verify(reference);
+		const tx = transaction.data;
 
-		res.status(200).json({
-			status: transaction.data.status,
-			reference: transaction.data.reference,
-			amount: transaction.data.amount / 100, // Convert from kobo to naira
-			currency: transaction.data.currency,
-			metadata: transaction.data.metadata,
+		if (!tx) {
+			return res.status(502).json({ message: "Invalid response from Paystack" });
+		}
+
+		const order = await Order.findOne({ paystackReference: tx.reference || reference })
+			.populate("user")
+			.populate("products.product");
+
+		if (!order) {
+			console.warn("No local order found for Paystack reference", tx.reference || reference);
+			// return 200 here so frontend can still display success based on Paystack response
+			return res.status(200).json({
+				status: tx.status,
+				reference: tx.reference,
+				amount: tx.amount / 100,
+				currency: tx.currency,
+				metadata: tx.metadata,
+				message: "Payment verified, but local order record not found",
+			});
+		}
+
+		if (tx.status === "success" && order.paymentStatus !== "paid") {
+			await Order.findByIdAndUpdate(order._id, {
+				$set: {
+					paymentStatus: "paid",
+					paystackTransactionId: tx.id || order.paystackTransactionId,
+					paidAt: new Date(),
+				},
+			});
+
+			await User.findByIdAndUpdate(order.user._id, { $set: { cartItems: [] } });
+
+			if (!order.paymentConfirmationEmailSentAt) {
+				try {
+					const toEmail = order?.user?.email;
+					const itemNames = order.products?.map((p) => p?.product?.name || "Item") || [];
+
+					if (toEmail) {
+						const { html, text } = buildPaymentSuccessEmail({
+							name: order?.user?.name,
+							orderId: order._id.toString(),
+							items: itemNames,
+							total: order.totalAmount,
+							currency: order.currency,
+							courseFiles: order.products?.flatMap((p) => p?.product?.courseFiles || []) || [],
+						});
+
+						await sendEmail({
+							to: toEmail,
+							subject: "Payment successful - course access",
+							html,
+							text,
+						});
+
+						await Order.findByIdAndUpdate(order._id, {
+							$set: { paymentConfirmationEmailSentAt: new Date() },
+							$unset: { paymentConfirmationEmailError: "" },
+						});
+					}
+				} catch (emailError) {
+					console.error("Failed to send Paystack confirmation email:", emailError);
+					await Order.findByIdAndUpdate(order._id, {
+						$set: {
+							paymentConfirmationEmailError:
+								emailError?.message || "Failed to send payment confirmation email",
+						},
+					});
+				}
+			}
+		}
+
+		return res.status(200).json({
+			status: tx.status,
+			reference: tx.reference,
+			amount: tx.amount / 100,
+			currency: tx.currency,
+			metadata: tx.metadata,
 		});
 	} catch (error) {
 		console.error("Error verifying Paystack payment:", error);
-		res.status(500).json({ message: "Failed to verify payment" });
+		res.status(500).json({ message: "Failed to verify payment", details: error.message });
 	}
 };
 
