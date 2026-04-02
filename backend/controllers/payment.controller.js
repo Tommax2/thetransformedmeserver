@@ -748,11 +748,17 @@ export const verifyPaystackPayment = async (req, res) => {
 			return res.status(400).json({ message: "reference or trxref is required" });
 		}
 
-		const transaction = await paystack.transaction.verify(reference);
-		const tx = transaction.data;
+		// paystack-api expects an object so it can interpolate `{reference}` in the route.
+		// Passing a string throws: "Cannot use 'in' operator ..."
+		const transaction = await paystack.transaction.verify({ reference });
+		const tx = transaction?.data;
 
 		if (!tx) {
-			return res.status(502).json({ message: "Invalid response from Paystack" });
+			return res.status(502).json({
+				message: "Invalid response from Paystack",
+				paystackStatus: transaction?.status,
+				paystackMessage: transaction?.message,
+			});
 		}
 
 		const order = await Order.findOne({ paystackReference: tx.reference || reference })
