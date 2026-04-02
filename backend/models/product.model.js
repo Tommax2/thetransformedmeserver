@@ -26,7 +26,12 @@ const productSchema = new mongoose.Schema({
     isFeatured:{
         type:Boolean,
         default:false
-    }
+    },
+    courseFiles: [{
+        name: { type: String, required: true },
+        url: { type: String, required: true },
+        type: { type: String, enum: ['pdf', 'video', 'audio', 'document', 'other'], default: 'other' }
+    }]
 },{timestamps: true});
 
 const Product = mongoose.model('Product', productSchema);

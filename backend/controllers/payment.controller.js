@@ -38,7 +38,7 @@ const buildPaymentSuccessEmail = ({
   items,
   total,
   currency,
-  whatsappLink,
+  courseFiles = [],
 }) => {
   const greetingName = name || 'there';
   const totalText = formatMoney(total, currency);
@@ -46,17 +46,42 @@ const buildPaymentSuccessEmail = ({
   const itemsHtml =
     items && items.length
       ? items.map((i) => `<tr><td style="padding:6px 0;font-size:15px;font-weight:500">${i}</td></tr>`).join('')
-      : `<tr><td style="padding:6px 0;font-size:15px;font-weight:500">—</td></tr>`;
+      : `<tr><td style="padding:6px 0;font-size:15px;font-weight:500">—</td></tr>`; 
 
-  const whatsappCta = whatsappLink
-    ? `<div style="text-align:center;margin:0 0 28px">
-        <a href="${whatsappLink}" style="display:inline-block;background:#25D366;color:#fff;text-decoration:none;padding:12px 28px;border-radius:99px;font-size:15px;font-weight:500">Message us on WhatsApp</a>
-       </div>`
-    : `<p style="font-size:14px;color:#6b7280">Reply to this email for help accessing your course.</p>`;
+  const courseFilesHtml = courseFiles && courseFiles.length
+    ? courseFiles.map((file) => 
+        `<tr>
+          <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:14px;font-weight:500">${file.name}</span>
+              <a href="${file.url}" style="display:inline-block;background:#10b981;color:#fff;text-decoration:none;padding:6px 12px;border-radius:4px;font-size:12px;font-weight:500" target="_blank">Download</a>
+            </div>
+          </td>
+        </tr>`
+      ).join('')
+    : '';
 
-  const nextStepsNote = whatsappLink
-    ? `To access your course, please message us on WhatsApp using the link below, and our team will get you set up promptly.`
-    : `Reply to this email and our team will get you set up promptly.`;
+  const courseAccessSection = courseFiles && courseFiles.length ? `
+    <div style="background:#f0fdf4;border-left:3px solid #10b981;border-radius:0 8px 8px 0;padding:16px 20px;margin:0 0 24px">
+      <div style="font-weight:500;margin-bottom:12px;font-size:15px;color:#065f46">🎓 Your Course Materials</div>
+      <p style="margin:0 0 12px;font-size:14px;color:#374151;line-height:1.6">Download your course materials below. Click the download button next to each file.</p>
+      <table style="width:100%;border-collapse:collapse">${courseFilesHtml}</table>
+    </div>` : '';
+
+  const nextStepsNote = courseFiles && courseFiles.length 
+    ? `Your course materials are ready for download above. If you have any questions about accessing your course, feel free to reach out.`
+    : `To access your course, please message us on WhatsApp using the link below, and our team will get you set up promptly.`;
+
+  const whatsappCta = (!courseFiles || courseFiles.length === 0) ? `
+    <div style="text-align:center;margin:0 0 28px">
+      <a href="${buildWhatsAppLink({
+        phone: process.env.COURSE_WHATSAPP_NUMBER,
+        message: `Hi, I just completed payment for my course. My order ID is ${orderId}. Please send my course access details.`
+      })}" style="display:inline-block;background:#25D366;color:#fff;text-decoration:none;padding:12px 28px;border-radius:99px;font-size:15px;font-weight:500">Message us on WhatsApp</a>
+    </div>` : `<p style="font-size:14px;color:#6b7280;text-align:center;margin:0 0 28px">Need help? <a href="${buildWhatsAppLink({
+    phone: process.env.COURSE_WHATSAPP_NUMBER,
+    message: `Hi, I just completed payment for my course. My order ID is ${orderId}. I need help accessing my materials.`
+  })}" style="color:#059669;text-decoration:none;font-weight:500">Contact us on WhatsApp</a></p>`;
 
   const html = `
     <p style="margin:0 0 20px;font-size:16px">Hi <b>${greetingName}</b>,</p>
@@ -79,6 +104,8 @@ const buildPaymentSuccessEmail = ({
       </div>
     </div>
 
+    ${courseAccessSection}
+
     <div style="background:#f0f9ff;border-left:3px solid #3b82f6;border-radius:0 8px 8px 0;padding:16px 20px;margin:0 0 24px">
       <div style="font-weight:500;margin-bottom:6px;font-size:15px">Next Steps</div>
       <p style="margin:0;font-size:14px;color:#4b5563;line-height:1.6">${nextStepsNote}</p>
@@ -92,17 +119,24 @@ const buildPaymentSuccessEmail = ({
     <p style="margin:0;font-size:14px;color:#6b7280">Warm regards,<br><b>The Transformed Me Academy Team</b></p>
   `;
 
+  const courseFilesText = courseFiles && courseFiles.length
+    ? '\n\nYour Course Materials:\n' + courseFiles.map(file => `• ${file.name}: ${file.url}`).join('\n')
+    : '';
+
   const text =
     `Hi ${greetingName},\n\n` +
     `Your payment was successful—welcome to The Transformed Me Academy!\n\n` +
     (orderId ? `Order ID: ${orderId}\n\n` : '') +
     `Your Purchase:\n` +
     (items && items.length ? items.join('\n') + '\n\n' : '') +
-    `Total Paid: ${totalText}\n\n` +
+    `Total Paid: ${totalText}${courseFilesText}\n\n` +
     `Next Steps:\n` +
-    (whatsappLink
-      ? `To access your course, please message us on WhatsApp:\n${whatsappLink}\n\n`
-      : `Reply to this email for help accessing your course.\n\n`) +
+    (courseFiles && courseFiles.length
+      ? `Your course materials are available for download using the links above.`
+      : `To access your course, please message us on WhatsApp:\n${buildWhatsAppLink({
+        phone: process.env.COURSE_WHATSAPP_NUMBER,
+        message: `Hi, I just completed payment for my course. My order ID is ${orderId}. Please send my course access details.`
+      })}\n\n`) +
     `If you have any questions or need assistance, feel free to reach out.\n\n` +
     `Thank you for choosing The Transformed Me Academy. We're excited to be part of your journey!\n\n` +
     `Warm regards,\nThe Transformed Me Academy Team`;
@@ -132,6 +166,12 @@ export const createStripeCheckoutSession = async (req, res) => {
 
 		const currency = (process.env.STRIPE_CURRENCY || "usd").toLowerCase();
 
+		// Get conversion rate from GBP to target currency
+		let conversionRate = 1; // default for GBP
+		if (currency === 'usd') {
+			// If needed, but currently gbp
+		}
+
 		let totalAmount = 0;
 		const orderProducts = cartItems.map((item) => {
 			const product = products.find(
@@ -139,12 +179,13 @@ export const createStripeCheckoutSession = async (req, res) => {
 			);
 			if (!product) throw new Error(`Product not found: ${item.productId}`);
 
-			totalAmount += product.price * item.quantity;
+			const convertedPrice = product.price * conversionRate;
+			totalAmount += convertedPrice * item.quantity;
 
 			return {
 				product: item.productId,
 				quantity: item.quantity,
-				price: product.price,
+				price: convertedPrice,
 			};
 		});
 
@@ -240,6 +281,12 @@ export const createPaystackCheckoutSession = async (req, res) => {
 
 		const currency = (process.env.PAYSTACK_CURRENCY || "ngn").toLowerCase();
 
+		// Get conversion rate from GBP to target currency
+		let conversionRate = 1; // default for GBP
+		if (currency === 'ngn') {
+			conversionRate = parseFloat(process.env.GBP_TO_NGN) || 1828.92;
+		}
+
 		let totalAmount = 0;
 		const orderProducts = cartItems.map((item) => {
 			const product = products.find(
@@ -247,12 +294,13 @@ export const createPaystackCheckoutSession = async (req, res) => {
 			);
 			if (!product) throw new Error(`Product not found: ${item.productId}`);
 
-			totalAmount += product.price * item.quantity;
+			const convertedPrice = product.price * conversionRate;
+			totalAmount += convertedPrice * item.quantity;
 
 			return {
 				product: item.productId,
 				quantity: item.quantity,
-				price: product.price,
+				price: convertedPrice,
 			};
 		});
 
@@ -391,7 +439,7 @@ export const stripeWebhook = async (req, res) => {
 								items: itemNames,
 								total: order.totalAmount,
 								currency: order.currency,
-								whatsappLink,
+								courseFiles: order.products?.flatMap(p => p?.product?.courseFiles || []) || [],
 							});
 
 							await sendEmail({
@@ -536,7 +584,7 @@ export const paystackWebhook = async (req, res) => {
 								items: itemNames,
 								total: order.totalAmount,
 								currency: order.currency,
-								whatsappLink,
+								courseFiles: order.products?.flatMap(p => p?.product?.courseFiles || []) || [],
 							});
 
 							await sendEmail({
@@ -655,7 +703,7 @@ export const resendPaymentConfirmationEmail = async (req, res) => {
 				items: itemNames,
 				total: order.totalAmount,
 				currency: order.currency,
-				whatsappLink,
+				courseFiles: order.products?.flatMap(p => p?.product?.courseFiles || []) || [],
 			});
 
 			await sendEmail({
