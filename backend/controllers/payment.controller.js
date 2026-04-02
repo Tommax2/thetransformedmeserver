@@ -2,6 +2,7 @@ import Order from '../models/order.model.js';
 import User from '../models/user.model.js';
 import Product from '../models/product.model.js';
 import { getStripe } from '../lib/stripe.js';
+import { getPaystack } from '../lib/paystack.js';
 import { sendEmail } from '../lib/email.js';
 
 const normalizePhoneNumberForWhatsApp = (phone) => {
@@ -217,6 +218,101 @@ export const createStripeCheckoutSession = async (req, res) => {
 	}
 };
 
+export const createPaystackCheckoutSession = async (req, res) => {
+	try {
+		const paystack = getPaystack();
+		const user = req.user;
+		const cartItems = user.cartItems || [];
+
+		if (cartItems.length === 0) {
+			return res.status(400).json({ message: "Cart is empty" });
+		}
+
+		const products = await Product.find({
+			_id: { $in: cartItems.map((item) => item.productId) },
+		});
+
+		if (products.length !== cartItems.length) {
+			return res
+				.status(400)
+				.json({ message: "Some products are no longer available" });
+		}
+
+		const currency = (process.env.PAYSTACK_CURRENCY || "ngn").toLowerCase();
+
+		let totalAmount = 0;
+		const orderProducts = cartItems.map((item) => {
+			const product = products.find(
+				(p) => p._id.toString() === item.productId.toString()
+			);
+			if (!product) throw new Error(`Product not found: ${item.productId}`);
+
+			totalAmount += product.price * item.quantity;
+
+			return {
+				product: item.productId,
+				quantity: item.quantity,
+				price: product.price,
+			};
+		});
+
+		totalAmount = Math.round(totalAmount * 100); // Paystack expects amount in kobo (smallest currency unit)
+
+		const order = await Order.create({
+			user: user._id,
+			paymentProvider: "paystack",
+			paymentStatus: "pending",
+			currency,
+			products: orderProducts,
+			totalAmount: totalAmount / 100, // Store in major currency unit
+		});
+
+		const clientUrl =
+			(process.env.CLIENT_URL || process.env.SITE_URL || "http://localhost:5173").replace(
+				/\/$/,
+				""
+			);
+		const callbackUrl = `${clientUrl}/payment/paystack/callback`;
+
+		// Create Paystack transaction
+		const transactionData = {
+			amount: totalAmount,
+			email: user.email,
+			currency: currency.toUpperCase(),
+			callback_url: callbackUrl,
+			metadata: {
+				orderId: order._id.toString(),
+				userId: user._id.toString(),
+				custom_fields: orderProducts.map((item, index) => {
+					const product = products.find(
+						(p) => p._id.toString() === item.product.toString()
+					);
+					return {
+						display_name: `Item ${index + 1}`,
+						variable_name: `item_${index + 1}`,
+						value: product?.name || "Item",
+					};
+				}),
+			},
+		};
+
+		const transaction = await paystack.transaction.initialize(transactionData);
+
+		await Order.findByIdAndUpdate(order._id, {
+			$set: { paystackReference: transaction.data.reference },
+		});
+
+		res.status(200).json({
+			orderId: order._id,
+			reference: transaction.data.reference,
+			url: transaction.data.authorization_url,
+		});
+	} catch (error) {
+		console.error("Error creating Paystack Checkout session:", error);
+		res.status(500).json({ message: "Server Error", error: error.message });
+	}
+};
+
 export const stripeWebhook = async (req, res) => {
 	const stripe = getStripe();
 	const signature = req.headers["stripe-signature"];
@@ -349,6 +445,138 @@ export const stripeWebhook = async (req, res) => {
 		return res.status(500).json({ message: "Webhook handler error" });
 	}
 };
+
+export const paystackWebhook = async (req, res) => {
+	try {
+		const paystack = getPaystack();
+		const event = req.body;
+
+		// Verify webhook signature for production security
+		const secret = process.env.PAYSTACK_SECRET_KEY;
+		const signature = req.headers['x-paystack-signature'];
+
+		if (!signature) {
+			console.error('Paystack webhook signature missing');
+			return res.status(400).json({ message: 'Webhook signature missing' });
+		}
+
+		// Paystack uses HMAC SHA512 for signature verification
+		const crypto = await import('crypto');
+		const expectedSignature = crypto.default
+			.createHmac('sha512', secret)
+			.update(JSON.stringify(req.body))
+			.digest('hex');
+
+		if (signature !== expectedSignature) {
+			console.error('Paystack webhook signature verification failed');
+			return res.status(400).json({ message: 'Invalid signature' });
+		}
+
+		console.log('Paystack webhook received:', event.event);
+
+		if (event.event === "charge.success") {
+			const { reference, status, amount, currency } = event.data;
+
+			if (status === "success") {
+				console.log('Processing successful Paystack payment:', reference);
+
+				// Find order by Paystack reference
+				const order = await Order.findOne({ paystackReference: reference })
+					.populate("user")
+					.populate("products.product");
+
+				if (!order) {
+					console.error('Order not found for Paystack reference:', reference);
+					return res.status(404).json({ message: 'Order not found' });
+				}
+
+				if (order.paymentStatus === "paid") {
+					console.log('Order already processed:', order._id);
+					return res.status(200).json({ message: 'Order already processed' });
+				}
+
+				await Order.findByIdAndUpdate(order._id, {
+					$set: {
+						paymentStatus: "paid",
+						paystackTransactionId: event.data.id,
+						paidAt: new Date(),
+					},
+				});
+
+				// Clear user's cart
+				await User.findByIdAndUpdate(order.user._id, { $set: { cartItems: [] } });
+
+				// Send confirmation email
+				if (!order.paymentConfirmationEmailSentAt) {
+					const toEmail = order?.user?.email;
+					const supportPhone = process.env.COURSE_WHATSAPP_NUMBER;
+
+					const itemNames =
+						order.products?.map((p) => p?.product?.name || "Item") || [];
+					const whatsappMessage =
+						`Hi, I just completed payment for ${itemNames.join(", ") || "my course"}. ` +
+						`My order ID is ${order._id}. Please send my course access details.`;
+					const whatsappLink = buildWhatsAppLink({
+						phone: supportPhone,
+						message: whatsappMessage,
+					});
+
+					if (!toEmail) {
+						await Order.findByIdAndUpdate(order._id, {
+							$set: {
+								paymentConfirmationEmailError:
+									"No customer email found to send confirmation",
+							},
+						});
+					} else {
+						try {
+							const { html, text } = buildPaymentSuccessEmail({
+								name: order?.user?.name,
+								orderId: order._id.toString(),
+								items: itemNames,
+								total: order.totalAmount,
+								currency: order.currency,
+								whatsappLink,
+							});
+
+							await sendEmail({
+								to: toEmail,
+								subject: "Payment successful - course access",
+								html,
+								text,
+							});
+
+							await Order.findByIdAndUpdate(order._id, {
+								$set: { paymentConfirmationEmailSentAt: new Date() },
+								$unset: { paymentConfirmationEmailError: "" },
+							});
+
+							console.log('Confirmation email sent for order:', order._id);
+						} catch (emailError) {
+							console.error(
+								"Failed to send payment confirmation email:",
+								emailError
+							);
+							await Order.findByIdAndUpdate(order._id, {
+								$set: {
+									paymentConfirmationEmailError:
+										emailError?.message ||
+										"Failed to send payment confirmation email",
+								},
+							});
+						}
+					}
+				}
+			}
+		}
+
+		return res.status(200).json({ received: true });
+	} catch (error) {
+		console.error("Error handling Paystack webhook:", error);
+		return res.status(500).json({ message: "Webhook handler error" });
+	}
+};
+
 export const getStripeSession = async (req, res) => {
     try {
         const stripe = getStripe();
@@ -375,6 +603,118 @@ export const getStripeSession = async (req, res) => {
         res.status(500).json({ message: "Failed to retrieve session" });
     }
 };
+
+export const resendPaymentConfirmationEmail = async (req, res) => {
+	try {
+		const { orderId } = req.params;
+		const user = req.user;
+
+		if (!orderId) {
+			return res.status(400).json({ message: "Order ID is required" });
+		}
+
+		// Find the order and ensure it belongs to the user
+		const order = await Order.findOne({
+			_id: orderId,
+			user: user._id,
+			paymentStatus: "paid"
+		}).populate("user").populate("products.product");
+
+		if (!order) {
+			return res.status(404).json({ message: "Paid order not found" });
+		}
+
+		// Check if email was already sent recently (within last hour)
+		const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+		if (order.paymentConfirmationEmailSentAt && order.paymentConfirmationEmailSentAt > oneHourAgo) {
+			return res.status(429).json({
+				message: "Confirmation email was sent recently. Please wait before requesting again."
+			});
+		}
+
+		const toEmail = order?.user?.email;
+		const supportPhone = process.env.COURSE_WHATSAPP_NUMBER;
+
+		const itemNames = order.products?.map((p) => p?.product?.name || "Item") || [];
+		const whatsappMessage =
+			`Hi, I just completed payment for ${itemNames.join(", ") || "my course"}. ` +
+			`My order ID is ${order._id}. Please send my course access details.`;
+		const whatsappLink = buildWhatsAppLink({
+			phone: supportPhone,
+			message: whatsappMessage,
+		});
+
+		if (!toEmail) {
+			return res.status(400).json({ message: "No email address found for this order" });
+		}
+
+		try {
+			const { html, text } = buildPaymentSuccessEmail({
+				name: order?.user?.name,
+				orderId: order._id.toString(),
+				items: itemNames,
+				total: order.totalAmount,
+				currency: order.currency,
+				whatsappLink,
+			});
+
+			await sendEmail({
+				to: toEmail,
+				subject: "Payment successful - course access (resent)",
+				html,
+				text,
+			});
+
+			await Order.findByIdAndUpdate(order._id, {
+				$set: { paymentConfirmationEmailSentAt: new Date() },
+				$unset: { paymentConfirmationEmailError: "" },
+			});
+
+			res.status(200).json({
+				message: "Confirmation email sent successfully",
+				orderId: order._id
+			});
+		} catch (emailError) {
+			console.error("Failed to resend payment confirmation email:", emailError);
+			await Order.findByIdAndUpdate(order._id, {
+				$set: {
+					paymentConfirmationEmailError:
+						emailError?.message ||
+						"Failed to resend payment confirmation email",
+				},
+			});
+			res.status(500).json({ message: "Failed to send email" });
+		}
+	} catch (error) {
+		console.error("Error resending payment confirmation email:", error);
+		res.status(500).json({ message: "Server Error", error: error.message });
+	}
+};
+
+export const verifyPaystackPayment = async (req, res) => {
+	try {
+		const paystack = getPaystack();
+		const { reference } = req.query;
+
+		if (!reference) {
+			return res.status(400).json({ message: "reference is required" });
+		}
+
+		const transaction = await paystack.transaction.verify(reference);
+
+		res.status(200).json({
+			status: transaction.data.status,
+			reference: transaction.data.reference,
+			amount: transaction.data.amount / 100, // Convert from kobo to naira
+			currency: transaction.data.currency,
+			metadata: transaction.data.metadata,
+		});
+	} catch (error) {
+		console.error("Error verifying Paystack payment:", error);
+		res.status(500).json({ message: "Failed to verify payment" });
+	}
+};
+
 // Function to generate WhatsApp link
 function generateWhatsAppLink(user, products, orderProducts, totalAmount, orderId) {
     // Build product list

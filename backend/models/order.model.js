@@ -9,7 +9,7 @@ const orderSchema = new mongoose.Schema(
 		},
 		paymentProvider: {
 			type: String,
-			enum: ["manual", "stripe"],
+			enum: ["manual", "stripe", "paystack"],
 			default: "manual",
 		},
 		paymentStatus: {
@@ -24,6 +24,12 @@ const orderSchema = new mongoose.Schema(
 			type: String,
 		},
 		stripePaymentIntentId: {
+			type: String,
+		},
+		paystackReference: {
+			type: String,
+		},
+		paystackTransactionId: {
 			type: String,
 		},
 		paidAt: {

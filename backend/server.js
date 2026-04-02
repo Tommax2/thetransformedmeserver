@@ -10,7 +10,7 @@ import productRoutes from './routes/product.route.js';
 import cartRoutes from './routes/cart.route.js';
 import paymentRoutes from './routes/payment.route.js';
 import analyticsRoutes from './routes/analytics.route.js';
-import { stripeWebhook } from "./controllers/payment.controller.js";
+import { stripeWebhook, paystackWebhook } from "./controllers/payment.controller.js";
 import { webhookRateLimiter } from './middleware/rateLimit.js';
 
 dotenv.config();
@@ -70,6 +70,14 @@ app.post(
 	webhookRateLimiter,
 	express.raw({ type: "application/json" }),
 	stripeWebhook
+);
+
+// Paystack webhooks require the raw request body for signature verification.
+app.post(
+	"/api/payment/paystack/webhook",
+	webhookRateLimiter,
+	express.raw({ type: "application/json" }),
+	paystackWebhook
 );
 
 app.use(express.json(  {  limit:"10mb"  }));
